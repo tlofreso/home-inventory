@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Inventory Items</h1>
+<div class="mb-3">
+    <a href="{{ url_for('add_item') }}" class="btn btn-primary">Add New Item</a>
+</div>
+
+<div class="table-responsive">
+    <table id="itemsTable" class="table table-striped">
+        <thead>
+            <tr>
+                <th>Friendly Name</th>
+                <th>Model Name</th>
+                <th>Model #</th>
+                <th>Serial #</th>
+                <th>Manufacturer</th>
+                <th>Manufactured Date</th>
+                <th>Purchase Date</th>
+                <th>Purchase Price</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.friendly_name }}</td>
+                <td>{{ item.model_name }}</td>
+                <td>{{ item.model_number }}</td>
+                <td>{{ item.serial_number }}</td>
+                <td>{{ item.manufacturer }}</td>
+                <td>{{ item.manufactured_date|format_date }}</td>
+                <td>{{ item.purchase_date|format_date }}</td>
+                <td>{{ item.purchase_price|format_price }}</td>
+                <td>
+                    <a href="{{ url_for('edit_item', id=item.id) }}" class="btn btn-sm btn-primary">Edit</a>
+                    <form action="{{ url_for('delete_item', id=item.id) }}" method="POST" class="d-inline">
+                        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    $(document).ready(function() {
+        $('#itemsTable').DataTable({
+            order: [[0, 'asc']],
+            pageLength: 25
+        });
+    });
+</script>
+{% endblock %}
