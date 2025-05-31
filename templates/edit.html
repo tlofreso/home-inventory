@@ -2,7 +2,9 @@
 
 {% block content %}
 <h1>Edit Item</h1>
-<form method="POST">
+
+<!-- Edit Item Form -->
+<form method="POST" enctype="multipart/form-data">
     <div class="row">
         <div class="col-md-6 mb-3">
             <label for="friendly_name" class="form-label">Friendly Name</label>
@@ -47,9 +49,126 @@
         <label for="description" class="form-label">Description</label>
         <textarea class="form-control" id="description" name="description" rows="3">{{ item.description }}</textarea>
     </div>
+    
+    <!-- Add New Attachments -->
+    <div class="mb-3">
+        <label for="attachments" class="form-label">Add New Attachments</label>
+        <input type="file" class="form-control" id="attachments" name="attachments" multiple 
+               accept=".txt,.pdf,.png,.jpg,.jpeg,.gif,.doc,.docx,.xls,.xlsx">
+        <div class="form-text">Select multiple files to upload (receipts, manuals, etc.). Max 16MB per file.</div>
+    </div>
+    
     <div class="mb-3">
         <button type="submit" class="btn btn-primary">Save Changes</button>
         <a href="{{ url_for('index') }}" class="btn btn-secondary">Cancel</a>
     </div>
 </form>
+
+<!-- Existing Attachments (Below the form) -->
+{% if item.attachments %}
+<hr class="my-4">
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5>Current Attachments</h5>
+        <div>
+            <button type="button" class="btn btn-sm btn-outline-secondary me-2" onclick="toggleSelectAll()">
+                Select All
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteSelected()" id="deleteSelectedBtn" disabled>
+                Delete Selected
+            </button>
+        </div>
+    </div>
+    
+    <form id="bulkDeleteForm" action="{{ url_for('delete_attachments_bulk') }}" method="POST" style="display: none;">
+        <!-- Hidden inputs for selected attachment IDs will be added here by JavaScript -->
+    </form>
+    
+    <div class="list-group">
+        {% for attachment in item.attachments %}
+        <div class="list-group-item">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <input type="checkbox" class="form-check-input me-3 attachment-checkbox" 
+                           data-attachment-id="{{ attachment.id }}" onchange="updateDeleteButton()">
+                    <div>
+                        <a href="{{ url_for('download_attachment', attachment_id=attachment.id) }}" class="text-decoration-none">
+                            <i class="bi bi-file-earmark"></i> {{ attachment.original_filename }}
+                        </a>
+                        <small class="text-muted d-block">{{ attachment.file_size|format_file_size }}</small>
+                    </div>
+                </div>
+                <form action="{{ url_for('delete_attachment', attachment_id=attachment.id) }}" method="POST" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" 
+                            onclick="return confirm('Are you sure you want to delete this attachment?')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleSelectAll() {
+    const checkboxes = document.querySelectorAll('.attachment-checkbox');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    
+    checkboxes.forEach(cb => {
+        cb.checked = !allChecked;
+    });
+    
+    updateDeleteButton();
+}
+
+function updateDeleteButton() {
+    const checkedBoxes = document.querySelectorAll('.attachment-checkbox:checked');
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+    
+    if (checkedBoxes.length > 0) {
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = `Delete Selected (${checkedBoxes.length})`;
+    } else {
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = 'Delete Selected';
+    }
+}
+
+function deleteSelected() {
+    const checkedBoxes = document.querySelectorAll('.attachment-checkbox:checked');
+    
+    if (checkedBoxes.length === 0) {
+        alert('Please select attachments to delete.');
+        return;
+    }
+    
+    const count = checkedBoxes.length;
+    const confirmMsg = count === 1 ? 
+        'Are you sure you want to delete this attachment?' : 
+        `Are you sure you want to delete these ${count} attachments?`;
+    
+    if (confirm(confirmMsg)) {
+        const form = document.getElementById('bulkDeleteForm');
+        
+        // Clear existing hidden inputs
+        form.innerHTML = '';
+        
+        // Add hidden inputs for selected attachment IDs
+        checkedBoxes.forEach(cb => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'attachment_ids';
+            input.value = cb.dataset.attachmentId;
+            form.appendChild(input);
+        });
+        
+        // Submit the form
+        form.submit();
+    }
+}
+</script>
 {% endblock %}

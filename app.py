@@ -1,11 +1,18 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = ''  # Change this to a secure secret key
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///home_inventory.db'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///home_inventory.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx'}
 
 db = SQLAlchemy(app)
 
@@ -22,6 +29,20 @@ class Item(db.Model):
     friendly_name = db.Column(db.String(100))
     purchase_date = db.Column(db.Date)
     purchase_price = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship to attachments
+    attachments = db.relationship('Attachment', backref='item', lazy=True, cascade='all, delete-orphan')
+
+class Attachment(db.Model):
+    __tablename__ = 'attachments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('items.id'), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_size = db.Column(db.Integer)
+    content_type = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -55,6 +76,39 @@ def validate_price(price_str):
     except ValueError:
         return None
 
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def save_attachment(file, item_id):
+    if file and allowed_file(file.filename):
+        original_filename = secure_filename(file.filename)
+        # Create unique filename to avoid conflicts
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_')
+        filename = timestamp + original_filename
+        
+        # Ensure upload directory exists
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        
+        # Get file size
+        file_size = os.path.getsize(file_path)
+        
+        # Create attachment record
+        attachment = Attachment(
+            item_id=item_id,
+            filename=filename,
+            original_filename=original_filename,
+            file_size=file_size,
+            content_type=file.content_type
+        )
+        
+        db.session.add(attachment)
+        return attachment
+    return None
+
 @app.route('/')
 def index():
     items = Item.query.order_by(Item.created_at.desc()).all()
@@ -83,11 +137,19 @@ def add_item():
 
         try:
             db.session.add(item)
+            db.session.flush()  # Get the item ID before committing
+            
+            # Handle file uploads
+            files = request.files.getlist('attachments')
+            for file in files:
+                if file and file.filename:
+                    save_attachment(file, item.id)
+            
             db.session.commit()
             flash('Item added successfully!', 'success')
             return redirect(url_for('index'))
         except Exception as e:
-            flash(f'Error adding item: {str(e)}', 'error')
+            flash(f'Error adding item: {str(e)}', 'danger')
             db.session.rollback()
 
     return render_template('add.html')
@@ -108,11 +170,17 @@ def edit_item(id):
         item.purchase_price = validate_price(request.form.get('purchase_price'))
 
         try:
+            # Handle file uploads
+            files = request.files.getlist('attachments')
+            for file in files:
+                if file and file.filename:
+                    save_attachment(file, item.id)
+            
             db.session.commit()
             flash('Item updated successfully!', 'success')
             return redirect(url_for('index'))
         except Exception as e:
-            flash(f'Error updating item: {str(e)}', 'error')
+            flash(f'Error updating item: {str(e)}', 'danger')
             db.session.rollback()
 
     return render_template('edit.html', item=item)
@@ -121,13 +189,84 @@ def edit_item(id):
 def delete_item(id):
     item = Item.query.get_or_404(id)
     try:
+        # Delete associated files from filesystem
+        for attachment in item.attachments:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], attachment.filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
         db.session.delete(item)
         db.session.commit()
         flash('Item deleted successfully!', 'success')
     except Exception as e:
-        flash(f'Error deleting item: {str(e)}', 'error')
+        flash(f'Error deleting item: {str(e)}', 'danger')
         db.session.rollback()
     return redirect(url_for('index'))
+
+@app.route('/attachment/<int:attachment_id>')
+def download_attachment(attachment_id):
+    attachment = Attachment.query.get_or_404(attachment_id)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], attachment.filename, 
+                             as_attachment=True, download_name=attachment.original_filename)
+
+@app.route('/delete_attachment/<int:attachment_id>', methods=['POST'])
+def delete_attachment(attachment_id):
+    attachment = Attachment.query.get_or_404(attachment_id)
+    item_id = attachment.item_id
+    
+    try:
+        # Delete file from filesystem
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], attachment.filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        
+        db.session.delete(attachment)
+        db.session.commit()
+        flash('Attachment deleted successfully!', 'success')
+    except Exception as e:
+        flash(f'Error deleting attachment: {str(e)}', 'danger')
+        db.session.rollback()
+    
+    return redirect(url_for('edit_item', id=item_id))
+
+@app.route('/delete_attachments_bulk', methods=['POST'])
+def delete_attachments_bulk():
+    attachment_ids = request.form.getlist('attachment_ids')
+    
+    if not attachment_ids:
+        flash('No attachments selected for deletion.', 'warning')
+        return redirect(request.referrer or url_for('index'))
+    
+    item_id = None
+    deleted_count = 0
+    
+    try:
+        for attachment_id in attachment_ids:
+            attachment = Attachment.query.get(attachment_id)
+            if attachment:
+                if item_id is None:
+                    item_id = attachment.item_id
+                
+                # Delete file from filesystem
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], attachment.filename)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                db.session.delete(attachment)
+                deleted_count += 1
+        
+        db.session.commit()
+        
+        if deleted_count > 0:
+            flash(f'Successfully deleted {deleted_count} attachment(s).', 'success')
+        else:
+            flash('No attachments were deleted.', 'warning')
+            
+    except Exception as e:
+        flash(f'Error deleting attachments: {str(e)}', 'danger')
+        db.session.rollback()
+    
+    return redirect(url_for('edit_item', id=item_id) if item_id else url_for('index'))
 
 @app.template_filter('format_date')
 def format_date(date):
@@ -140,6 +279,17 @@ def format_price(price):
     if price is not None:
         return f"${price:,.2f}"
     return ''
+
+@app.template_filter('format_file_size')
+def format_file_size(size_bytes):
+    if size_bytes is None:
+        return ''
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 # Initialize the database
 def init_db():

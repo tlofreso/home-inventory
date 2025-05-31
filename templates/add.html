@@ -2,7 +2,7 @@
 
 {% block content %}
 <h1>Add New Item</h1>
-<form method="POST">
+<form method="POST" enctype="multipart/form-data">
     <div class="row">
         <div class="col-md-6 mb-3">
             <label for="friendly_name" class="form-label">Friendly Name</label>
@@ -46,6 +46,12 @@
     <div class="mb-3">
         <label for="description" class="form-label">Description</label>
         <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+    </div>
+    <div class="mb-3">
+        <label for="attachments" class="form-label">Attachments</label>
+        <input type="file" class="form-control" id="attachments" name="attachments" multiple 
+               accept=".txt,.pdf,.png,.jpg,.jpeg,.gif,.doc,.docx,.xls,.xlsx">
+        <div class="form-text">Select multiple files to upload (receipts, manuals, etc.). Max 16MB per file.</div>
     </div>
     <div class="mb-3">
         <button type="submit" class="btn btn-primary">Add Item</button>
